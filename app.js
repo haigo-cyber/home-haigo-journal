@@ -9,7 +9,7 @@
    HIER deine Google-Client-ID eintragen (aus der Google Cloud Console,
    OAuth-2.0-Client-ID vom Typ "Webanwendung"). Sonst startet der Login nicht.
    ========================================================================= */
-const CLIENT_ID = "HIER_DEINE_GOOGLE_CLIENT_ID_EINTRAGEN";
+const CLIENT_ID = "22658520266-72537b3ef6bi63gmfaavt4r5snnjv0ln.apps.googleusercontent.com";
 
 const FOLDER_NAME = "haigo-journal";          // Name des Drive-Ordners, den die App anlegt
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
