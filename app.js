@@ -9,7 +9,7 @@
    HIER deine Google-Client-ID eintragen (aus der Google Cloud Console,
    OAuth-2.0-Client-ID vom Typ "Webanwendung"). Sonst startet der Login nicht.
    ========================================================================= */
-const CLIENT_ID = "22658520266-72537b3ef6bi63gmfaavt4r5snnjv0ln.apps.googleusercontent.com";
+const CLIENT_ID = "HIER_DEINE_GOOGLE_CLIENT_ID_EINTRAGEN";
 
 const FOLDER_NAME = "haigo-journal";          // Name des Drive-Ordners, den die App anlegt
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
@@ -553,7 +553,7 @@ function renderEditorTagPicker() {
   box.innerHTML = list.map(t =>
     '<span class="chip' + (editorSelectedTags.has(t) ? " on" : "") + '" data-tag="' + esc(t) + '">' + esc(t) + "</span>"
   ).join("");
-  $$("#editorTags .chip").forEach(ch => ch.onclick = () => {
+  $$("#editorTags .chip").forEach(ch => ch.ondblclick = () => {
     const t = ch.dataset.tag;
     if (editorSelectedTags.has(t)) editorSelectedTags.delete(t); else editorSelectedTags.add(t);
     renderEditorTagPicker();
