@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>haigo-journal</title>
+  <meta name="theme-color" content="#0e1116">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Journal">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body data-journal="privat">
+
+  <!-- ===================== ANMELDUNG ===================== -->
+  <div id="authView">
+    <div class="auth-card">
+      <div class="auth-mark"></div>
+      <h1>haigo-journal</h1>
+      <p>Zwei Journale für Privates und Beruf. Die Einträge werden in deinem
+         Google Drive in einem eigenen Ordner gespeichert.</p>
+      <button id="loginBtn" class="btn primary">Mit Google anmelden</button>
+      <div id="authError" class="err"></div>
+    </div>
+  </div>
+
+  <!-- ===================== APP ===================== -->
+  <div id="appView" class="hidden">
+    <div class="wrap">
+
+      <header class="app-head">
+        <div class="app-mark"></div>
+        <div class="app-title">haigo-journal<small>Privat &amp; Job</small></div>
+        <div class="head-spacer"></div>
+        <button id="openTagsBtn" class="icon-btn">Tags</button>
+        <button id="signOutBtn" class="icon-btn">Abmelden</button>
+      </header>
+
+      <!-- Journal-Umschalter -->
+      <div class="switch" role="tablist" aria-label="Journal wählen">
+        <button data-j="privat" role="tab"><span class="dot"></span>Privat</button>
+        <button data-j="job" role="tab"><span class="dot"></span>Job</button>
+      </div>
+
+      <!-- Werkzeugleiste -->
+      <div class="toolbar">
+        <button id="newEntryBtn" class="btn primary">Neuer Eintrag</button>
+        <div class="search">
+          <span class="s-ico">⌕</span>
+          <input id="searchInput" type="text" placeholder="In der Liste suchen…" autocomplete="off">
+        </div>
+        <button id="openReportBtn" class="btn ghost">Bericht</button>
+      </div>
+
+      <!-- Tag-Filter -->
+      <div id="tagFilter" class="tagfilter"></div>
+
+      <!-- Liste -->
+      <div id="list" class="list"></div>
+
+    </div>
+  </div>
+
+  <!-- ===================== EDITOR ===================== -->
+  <div id="editorView" class="overlay">
+    <div class="wrap">
+      <div class="ov-head">
+        <button id="editorClose" class="icon-btn">Zurück</button>
+        <h2 id="editorTitle">Neuer Eintrag</h2>
+        <div class="head-spacer"></div>
+        <button id="deleteBtn" class="btn danger small hidden">Löschen</button>
+      </div>
+
+      <!-- gemeinsames Datum -->
+      <div class="field">
+        <label for="fDatum">Datum des Eintrags</label>
+        <input id="fDatum" type="date">
+        <div class="hint">Datum, über das der Eintrag handelt. Auch für nachträgliche Notizen frei wählbar.</div>
+      </div>
+
+      <!-- Job-Kopfdaten -->
+      <div id="jobFields">
+        <div class="field">
+          <label for="fUhrzeit">Uhrzeit</label>
+          <input id="fUhrzeit" type="time">
+        </div>
+        <div class="field">
+          <label for="fPartner">Name des Gesprächspartners</label>
+          <input id="fPartner" type="text" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="fThema">Thema</label>
+          <input id="fThema" type="text" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="fOrt">Ort des Gesprächs</label>
+          <input id="fOrt" type="text" autocomplete="off">
+        </div>
+      </div>
+
+      <!-- Job-Abschnitte -->
+      <div id="jobSections">
+        <div class="field">
+          <div class="section-label">Situation / Anlass</div>
+          <textarea id="fSec_situation" rows="3"></textarea>
+        </div>
+        <div class="field">
+          <div class="section-label">Gesprächsinhalt</div>
+          <textarea id="fSec_inhalt" rows="5"></textarea>
+        </div>
+        <div class="field">
+          <div class="section-label">Vereinbarungen / Ziele</div>
+          <textarea id="fSec_ziele" rows="3"></textarea>
+        </div>
+      </div>
+
+      <!-- Privat-Inhalt -->
+      <div id="privatFields">
+        <div class="field">
+          <label for="fText">Eintrag</label>
+          <textarea id="fText" rows="9"></textarea>
+        </div>
+      </div>
+
+      <!-- Tags -->
+      <div class="field">
+        <label>Tags</label>
+        <div id="editorTags" class="tagpick"></div>
+        <div class="tag-add" style="margin-top:10px">
+          <input id="newTagInput" type="text" placeholder="neuer Tag" autocomplete="off">
+          <button id="addTagBtn" class="btn small ghost">hinzufügen</button>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button id="saveBtn" class="btn primary">Speichern</button>
+        <div class="head-spacer"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== TAG-VERWALTUNG ===================== -->
+  <div id="tagsView" class="overlay">
+    <div class="wrap">
+      <div class="ov-head">
+        <button id="tagsClose" class="icon-btn">Zurück</button>
+        <h2>Tags verwalten</h2>
+      </div>
+
+      <div class="tag-manage-group">
+        <div class="section-label" style="color:#f0a64a">Privat</div>
+        <div id="tagList_privat"></div>
+        <div class="tag-add" style="margin-top:10px">
+          <input id="tagManagerInput_privat" type="text" placeholder="neuer Tag" autocomplete="off">
+          <button id="tagManagerAdd_privat" class="btn small ghost">hinzufügen</button>
+        </div>
+      </div>
+
+      <div class="tag-manage-group">
+        <div class="section-label" style="color:#46c2c8">Job</div>
+        <div id="tagList_job"></div>
+        <div class="tag-add" style="margin-top:10px">
+          <input id="tagManagerInput_job" type="text" placeholder="neuer Tag" autocomplete="off">
+          <button id="tagManagerAdd_job" class="btn small ghost">hinzufügen</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== BERICHT ===================== -->
+  <div id="reportView" class="overlay">
+    <div class="wrap">
+      <div class="ov-head">
+        <button id="reportClose" class="icon-btn">Zurück</button>
+        <h2>Bericht</h2>
+      </div>
+
+      <div class="report-controls">
+        <div class="field" style="margin-bottom:12px">
+          <label for="reportTerm">Suchtext (durchsucht alle Felder und Texte)</label>
+          <input id="reportTerm" type="text" placeholder="z. B. ein Name, ein Wort, ein Thema …" autocomplete="off">
+          <div class="hint">Leer lassen, um alle Einträge des gewählten Bereichs zu sammeln.</div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center">
+          <div id="reportScope" class="seg">
+            <button data-scope="current" class="on">Aktuelles Journal</button>
+            <button data-scope="both">Beide</button>
+          </div>
+          <button id="reportRun" class="btn primary">Bericht erstellen</button>
+          <button id="reportPrint" class="btn ghost small">Drucken / PDF</button>
+          <button id="reportCopy" class="btn ghost small">Kopieren</button>
+        </div>
+      </div>
+
+      <div id="reportMeta" class="report-meta"></div>
+      <div id="reportResults"></div>
+    </div>
+  </div>
+
+  <!-- Status -->
+  <div id="toast"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
