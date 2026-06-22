@@ -287,6 +287,8 @@ function buildContent(e) {
     fm.push("gespraechspartner: " + (e.partner || ""));
     fm.push("thema: " + (e.thema || ""));
     fm.push("ort: " + (e.ort || ""));
+  } else {
+    fm.push("titel: " + (e.titel || ""));
   }
   fm.push("tags: " + (e.tags || []).join(", "));
   fm.push("erstellt: " + (e.erstellt || new Date().toISOString()));
@@ -352,6 +354,7 @@ function fileToEntry(f) {
     partner: ap.partner || "",
     thema: ap.thema || "",
     ort: ap.ort || "",
+    titel: ap.titel || "",
     tags: ap.tags ? ap.tags.split(",").map(s => s.trim()).filter(Boolean) : [],
     erstellt: ap.erstellt || "",
     eid: ap.eid || "",
@@ -375,6 +378,8 @@ function appPropsFor(e) {
     ap.partner = e.partner || "";
     ap.thema = e.thema || "";
     ap.ort = e.ort || "";
+  } else {
+    ap.titel = e.titel || "";
   }
   return ap;
 }
@@ -412,6 +417,8 @@ async function loadEntries(journal) {
         e.partner = e.partner || meta.gespraechspartner || "";
         e.thema = e.thema || meta.thema || "";
         e.ort = e.ort || meta.ort || "";
+      } else {
+        e.titel = e.titel || meta.titel || "";
       }
       e._full = raw;
     } catch (err) { /* Eintrag bleibt minimal, Datum kommt aus dem Dateinamen */ }
@@ -475,7 +482,7 @@ function entryMatchesFilter(e) {
   if (activeTagFilter && !(e.tags || []).includes(activeTagFilter)) return false;
   if (listSearchTerm) {
     const t = listSearchTerm.toLowerCase();
-    const hay = [e.datum, deDate(e.datum), e.uhrzeit, e.partner, e.thema, e.ort, (e.tags || []).join(" ")]
+    const hay = [e.datum, deDate(e.datum), e.uhrzeit, e.partner, e.thema, e.ort, e.titel, (e.tags || []).join(" ")]
       .join(" ").toLowerCase();
     if (hay.indexOf(t) === -1) return false;
   }
@@ -507,16 +514,17 @@ function renderEntryCard(e) {
   if (e.journal === "job") {
     const meta = [deDate(e.datum), e.uhrzeit, e.ort].filter(Boolean).join("  ·  ");
     return '<div class="entry" data-fid="' + esc(e.fileId) + '">' +
-      '<div class="e-top"><div class="e-primary">' + (esc(e.partner) || "Ohne Name") + "</div>" +
+      '<div class="e-top"><div class="e-primary">' + (esc(e.thema) || "Ohne Thema") + "</div>" +
       '<div class="e-date">' + esc(deDate(e.datum)) + "</div></div>" +
-      (e.thema ? '<div class="e-secondary">' + esc(e.thema) + "</div>" : "") +
+      (e.partner ? '<div class="e-secondary">' + esc(e.partner) + "</div>" : "") +
       '<div class="e-meta">' + esc(meta) + "</div>" +
       tagChipsHTML(e.tags) +
       "</div>";
   }
   // privat
   return '<div class="entry" data-fid="' + esc(e.fileId) + '">' +
-    '<div class="e-top"><div class="e-primary">' + esc(deDate(e.datum)) + "</div></div>" +
+    '<div class="e-top"><div class="e-primary">' + (esc(e.titel) || "Ohne Überschrift") + "</div>" +
+    '<div class="e-date">' + esc(deDate(e.datum)) + "</div></div>" +
     '<div class="e-snippet" data-fid="' + esc(e.fileId) + '">…</div>' +
     tagChipsHTML(e.tags) +
     "</div>";
@@ -571,6 +579,7 @@ async function openEditor(fileId) {
   $("#fPartner").value = "";
   $("#fThema").value = "";
   $("#fOrt").value = "";
+  $("#fTitel").value = "";
   $("#fText").value = "";
   JOB_SECTIONS.forEach(s => { $("#fSec_" + s.key).value = ""; });
   $("#newTagInput").value = "";
@@ -587,6 +596,8 @@ async function openEditor(fileId) {
         $("#fPartner").value = e.partner || "";
         $("#fThema").value = e.thema || "";
         $("#fOrt").value = e.ort || "";
+      } else {
+        $("#fTitel").value = e.titel || "";
       }
       // Inhalt nachladen
       openOverlay("editorView");
@@ -605,6 +616,7 @@ async function openEditor(fileId) {
           const sec = splitJobSections(body);
           JOB_SECTIONS.forEach(s => { $("#fSec_" + s.key).value = sec[s.key] || ""; });
         } else {
+          if (meta.titel) $("#fTitel").value = meta.titel;
           $("#fText").value = body;
         }
         $("#toast").classList.remove("show");
@@ -643,6 +655,7 @@ async function handleSave() {
     JOB_SECTIONS.forEach(s => { e.sections[s.key] = $("#fSec_" + s.key).value; });
     if (!e.partner && !e.thema) { toast("Bitte mindestens Name oder Thema angeben.", true); return; }
   } else {
+    e.titel = $("#fTitel").value.trim();
     e.text = $("#fText").value;
     if (!e.text.trim()) { toast("Bitte einen Text eingeben.", true); return; }
   }
@@ -756,7 +769,7 @@ async function runReport() {
           body = await driveGetContent(e.fileId);
           e._full = body;
         }
-        const metaHay = [e.datum, deDate(e.datum), e.uhrzeit, e.partner, e.thema, e.ort, (e.tags || []).join(" ")].join(" ");
+        const metaHay = [e.datum, deDate(e.datum), e.uhrzeit, e.partner, e.thema, e.ort, e.titel, (e.tags || []).join(" ")].join(" ");
         const haystack = (metaHay + " " + body).toLowerCase();
         if (!term || haystack.indexOf(termLow) !== -1) hits.push(e);
       }
@@ -785,14 +798,15 @@ function renderReportEntry(e) {
   if (e.journal === "job") {
     const { body } = parseFrontmatter(e._full || "");
     const sec = splitJobSections(body);
-    inner = '<h3>' + (esc(e.partner) || "Ohne Name") + "</h3>" +
-      '<div class="r-sub">' + [esc(e.thema), esc(e.ort)].filter(Boolean).join("  ·  ") + "</div>" +
+    inner = '<h3>' + (esc(e.thema) || "Ohne Thema") + "</h3>" +
+      '<div class="r-sub">' + [esc(e.partner), esc(e.ort)].filter(Boolean).join("  ·  ") + "</div>" +
       JOB_SECTIONS.map(s => sec[s.key]
         ? '<div class="r-sec"><b>' + esc(s.label) + '</b><div class="r-body">' + esc(sec[s.key]) + "</div></div>"
         : "").join("");
   } else {
     const { body } = parseFrontmatter(e._full || "");
-    inner = '<div class="r-body">' + esc(body) + "</div>";
+    inner = (e.titel ? '<h3>' + esc(e.titel) + "</h3>" : "") +
+      '<div class="r-body">' + esc(body) + "</div>";
   }
   const tagsHtml = (e.tags && e.tags.length)
     ? '<div class="r-tags">' + e.tags.map(t => '<span class="chip read on">' + esc(t) + "</span>").join("") + "</div>"
