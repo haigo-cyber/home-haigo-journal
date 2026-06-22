@@ -1,6 +1,6 @@
 /* haigo-journal – Service Worker
    Cache-Version bei jedem Deploy hochzaehlen (v1 -> v2 -> ...). */
-const CACHE = "haigo-journal-v4";
+const CACHE = "haigo-journal-v5";
 
 const ASSETS = [
   "./",
