@@ -42,6 +42,11 @@ body[data-journal="job"] {
   --accent-weak: rgba(70, 194, 200, 0.14);
   --accent-line: rgba(70, 194, 200, 0.35);
 }
+body[data-journal="safe"] {
+  --accent:      #a78bfa;
+  --accent-weak: rgba(167, 139, 250, 0.14);
+  --accent-line: rgba(167, 139, 250, 0.35);
+}
 
 * { box-sizing: border-box; }
 
@@ -98,7 +103,7 @@ header.app-head {
 /* ---------- Journal-Umschalter (Signature) ---------- */
 .switch {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 6px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -123,6 +128,11 @@ header.app-head {
 .switch button .dot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; opacity: .55; }
 .switch button[data-j="privat"]:hover { color: #f0a64a; }
 .switch button[data-j="job"]:hover { color: #46c2c8; }
+.switch button[data-j="safe"]:hover { color: #a78bfa; }
+@media (max-width: 420px) {
+  .switch button { font-size: 14px; padding: 11px 4px; }
+  .switch button .dot { display: none; }
+}
 .switch button.active {
   color: var(--text);
   background: var(--accent-weak);
@@ -234,6 +244,45 @@ header.app-head {
   font-size: 14.5px;
 }
 .empty b { color: var(--text); font-weight: 600; display: block; margin-bottom: 6px; }
+
+/* ---------- Datensafe-Sperransicht ---------- */
+.safe-gate {
+  max-width: 420px;
+  margin: 30px auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 26px 22px;
+  text-align: center;
+}
+.safe-gate .lock { font-size: 30px; margin-bottom: 8px; color: var(--accent); }
+.safe-gate h3 { margin: 0 0 8px; font-size: 18px; }
+.safe-gate p { color: var(--muted); font-size: 13.5px; line-height: 1.6; margin: 0 0 18px; }
+.safe-gate input[type="password"] {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  color: var(--text);
+  font-size: 15px;
+  padding: 12px;
+  margin-bottom: 10px;
+  outline: none;
+}
+.safe-gate input[type="password"]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-weak); }
+.safe-gate .btn { width: 100%; justify-content: center; margin-top: 4px; }
+.safe-gate .warn {
+  color: #e0a23a;
+  font-size: 12.5px;
+  line-height: 1.55;
+  background: rgba(224,162,58,0.08);
+  border: 1px solid rgba(224,162,58,0.3);
+  border-radius: var(--radius-s);
+  padding: 10px 12px;
+  margin: 0 0 16px;
+  text-align: left;
+}
+.safe-gate .err { color: var(--danger); font-size: 13px; min-height: 18px; margin-top: 12px; }
 
 /* ---------- Overlays (Editor / Tags / Report) ---------- */
 .overlay {

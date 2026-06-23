@@ -25,9 +25,14 @@ const LS = {
   root:   "hj_root_id",
   privat: "hj_privat_id",
   job:    "hj_job_id",
+  safe:   "hj_safe_id",
   tagsId: "hj_tags_id",
   journal:"hj_journal",
 };
+
+// Datensafe (zweite Stufe, eigene Verschluesselung)
+const SAFE_VERIFIER = "haigo-journal-safe-ok";
+const SAFE_ITERATIONS = 250000;
 
 /* ====== ZUSTAND ========================================================== */
 let tokenClient = null;
@@ -35,13 +40,16 @@ let accessToken = null;
 let tokenResolve = null;
 let tokenReject = null;
 
-let folders = { root: null, privat: null, job: null };
+let folders = { root: null, privat: null, job: null, safe: null };
 let tagsFileId = null;
 let tags = { privat: [], job: [] };
 
+let safeKey = null;          // abgeleiteter Schluessel, nur im Speicher solange entsperrt
+let safeMetaFileId = null;   // ID von safe.json (null = noch nicht eingerichtet)
+
 let currentJournal = localStorage.getItem(LS.journal) || "privat";
-let entries = { privat: [], job: [] };   // geladene Eintraege (Metadaten je Eintrag)
-let loaded  = { privat: false, job: false };
+let entries = { privat: [], job: [], safe: [] };
+let loaded  = { privat: false, job: false, safe: false };
 
 let editingId = null;                    // null = neuer Eintrag
 let editorSelectedTags = new Set();
@@ -242,13 +250,20 @@ async function ensureStructure() {
   folders.root = rootId;
   localStorage.setItem(LS.root, rootId);
 
-  // Unterordner privat / job
-  for (const j of ["privat", "job"]) {
+  // Unterordner privat / job / safe
+  for (const j of ["privat", "job", "safe"]) {
     const sub = await driveList(q_folderByName(j, rootId), "files(id,name)");
     let id = sub.length ? sub[0].id : await driveCreateFolder(j, rootId);
     folders[j] = id;
     localStorage.setItem(LS[j], id);
   }
+
+  // safe.json (nur ID merken, nicht entschluesseln; null = noch nicht eingerichtet)
+  const sf = await driveList(
+    "name='safe.json' and trashed=false and '" + folders.safe + "' in parents",
+    "files(id,name)"
+  );
+  safeMetaFileId = sf.length ? sf[0].id : null;
 
   // tags.json
   const tagFiles = await driveList(
@@ -276,13 +291,104 @@ async function saveTags() {
   else tagsFileId = await driveCreateFile("tags.json", folders.root, "application/json", content);
 }
 
+/* ====== DATENSAFE: VERSCHLUESSELUNG (Web Crypto) ======================== */
+function bytesToB64(buf) {
+  const b = new Uint8Array(buf);
+  let s = "";
+  for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+  return btoa(s);
+}
+function b64ToBytes(str) {
+  const bin = atob(str);
+  const a = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
+  return a;
+}
+async function deriveKey(password, saltBytes, iterations) {
+  const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt: saltBytes, iterations: iterations, hash: "SHA-256" },
+    base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]
+  );
+}
+async function encryptText(key, text) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, key, new TextEncoder().encode(text));
+  return { iv: bytesToB64(iv), ct: bytesToB64(ct) };
+}
+async function decryptText(key, ivB64, ctB64) {
+  const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64ToBytes(ivB64) }, key, b64ToBytes(ctB64));
+  return new TextDecoder().decode(pt);
+}
+
+// Safe einrichten: Passwort festlegen, safe.json mit Salt und Pruefwert anlegen.
+async function setupSafe(password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key = await deriveKey(password, salt, SAFE_ITERATIONS);
+  const verifier = await encryptText(key, SAFE_VERIFIER);
+  const payload = JSON.stringify({ salt: bytesToB64(salt), iterations: SAFE_ITERATIONS, verifier: verifier });
+  safeMetaFileId = await driveCreateFile("safe.json", folders.safe, "application/json", payload, { app: "haigo-journal" });
+  safeKey = key;
+}
+
+// Safe entsperren: Passwort pruefen, Schluessel in den Speicher legen.
+async function unlockSafe(password) {
+  const raw = await driveGetContent(safeMetaFileId);
+  const meta = JSON.parse(raw);
+  const key = await deriveKey(password, b64ToBytes(meta.salt), meta.iterations || SAFE_ITERATIONS);
+  let okText = null;
+  try { okText = await decryptText(key, meta.verifier.iv, meta.verifier.ct); } catch (e) { okText = null; }
+  if (okText !== SAFE_VERIFIER) throw new Error("Falsches Passwort");
+  safeKey = key;
+}
+
+function lockSafe() {
+  safeKey = null;
+  entries.safe = [];
+  loaded.safe = false;
+}
+
+// Verschluesselte Eintraege laden und entschluesseln (nur wenn entsperrt).
+async function loadSafeEntries() {
+  const q = "'" + folders.safe + "' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder' and name!='safe.json'";
+  const files = await driveList(q, "files(id,name,appProperties)");
+  const list = [];
+  for (const f of files) {
+    if (f.name === "safe.json") continue;
+    try {
+      const raw = await driveGetContent(f.id);
+      const obj = JSON.parse(raw);
+      const content = await decryptText(safeKey, obj.iv, obj.ct);
+      const { meta } = parseFrontmatter(content);
+      list.push({
+        fileId: f.id,
+        fileName: f.name,
+        journal: "safe",
+        datum: meta.datum || "",
+        uhrzeit: meta.uhrzeit || "",
+        partner: meta.gespraechspartner || "",
+        thema: meta.thema || "",
+        ort: meta.ort || "",
+        tags: [],
+        erstellt: meta.erstellt || "",
+        eid: meta.id || "",
+        _full: content,
+      });
+    } catch (err) { /* nicht entschluesselbar -> ueberspringen */ }
+  }
+  sortEntries(list);
+  entries.safe = list;
+  loaded.safe = true;
+}
+
 /* ====== EINTRAEGE: AUFBAU & PARSEN ====================================== */
 // Baut den Dateitext (Frontmatter + lesbarer Inhalt).
 function buildContent(e) {
+  const isJobLike = (e.journal === "job" || e.journal === "safe");
   const fm = ["---"];
   fm.push("journal: " + e.journal);
   fm.push("datum: " + e.datum);
-  if (e.journal === "job") {
+  if (isJobLike) {
     fm.push("uhrzeit: " + (e.uhrzeit || ""));
     fm.push("gespraechspartner: " + (e.partner || ""));
     fm.push("thema: " + (e.thema || ""));
@@ -297,7 +403,7 @@ function buildContent(e) {
   fm.push("");
 
   let body = "";
-  if (e.journal === "job") {
+  if (isJobLike) {
     body = JOB_SECTIONS.map(s => "## " + s.label + "\n\n" + ((e.sections && e.sections[s.key]) || "").trim() + "\n").join("\n");
   } else {
     body = (e.text || "").trim() + "\n";
@@ -432,6 +538,22 @@ async function loadEntries(journal) {
 
 async function saveEntry(e) {
   const content = buildContent(e);
+
+  // Datensafe: Inhalt verschluesseln, neutraler Dateiname, keine Klartext-Metadaten
+  if (e.journal === "safe") {
+    const enc = await encryptText(safeKey, content);
+    const payload = JSON.stringify({ v: 1, iv: enc.iv, ct: enc.ct });
+    const ap = { app: "haigo-journal", journal: "safe", enc: "1" };
+    if (e.fileId) {
+      await driveUpdateFile(e.fileId, null, "application/json", payload, ap);
+    } else {
+      const fileName = (e.eid || makeId()) + ".enc";
+      e.fileName = fileName;
+      e.fileId = await driveCreateFile(fileName, folders.safe, "application/json", payload, ap);
+    }
+    return e;
+  }
+
   const ap = appPropsFor(e);
   const fileName = e.datum + "_" + (e.uhrzeit ? e.uhrzeit.replace(":", "") : nowHHMM().replace(":", "")) + "_" + e.eid + ".md";
   try {
@@ -511,7 +633,7 @@ function tagChipsHTML(tagsArr) {
 }
 
 function renderEntryCard(e) {
-  if (e.journal === "job") {
+  if (e.journal === "job" || e.journal === "safe") {
     const meta = [deDate(e.datum), e.uhrzeit, e.ort].filter(Boolean).join("  ·  ");
     return '<div class="entry" data-fid="' + esc(e.fileId) + '">' +
       '<div class="e-top"><div class="e-primary">' + (esc(e.thema) || "Ohne Thema") + "</div>" +
@@ -550,9 +672,11 @@ async function fillPrivateSnippets() {
 
 /* ====== EDITOR ========================================================= */
 function setEditorMode(journal) {
-  $("#jobFields").classList.toggle("hidden", journal !== "job");
-  $("#jobSections").classList.toggle("hidden", journal !== "job");
+  const jobLike = (journal === "job" || journal === "safe");
+  $("#jobFields").classList.toggle("hidden", !jobLike);
+  $("#jobSections").classList.toggle("hidden", !jobLike);
   $("#privatFields").classList.toggle("hidden", journal !== "privat");
+  $("#editorTagField").classList.toggle("hidden", journal === "safe");
 }
 
 function renderEditorTagPicker() {
@@ -591,7 +715,7 @@ async function openEditor(fileId) {
     if (e) {
       $("#fDatum").value = e.datum || todayISO();
       (e.tags || []).forEach(t => editorSelectedTags.add(t));
-      if (e.journal === "job") {
+      if (e.journal === "job" || e.journal === "safe") {
         $("#fUhrzeit").value = e.uhrzeit || "";
         $("#fPartner").value = e.partner || "";
         $("#fThema").value = e.thema || "";
@@ -602,13 +726,17 @@ async function openEditor(fileId) {
       // Inhalt nachladen
       openOverlay("editorView");
       renderEditorTagPicker();
-      toastBusy("Lade Eintrag…");
+      if (e.journal !== "safe") toastBusy("Lade Eintrag…");
       try {
-        const raw = await driveGetContent(fileId);
-        e._full = raw;
+        let raw;
+        if (e.journal === "safe") {
+          raw = e._full || "";   // bereits entschluesselt im Speicher
+        } else {
+          raw = await driveGetContent(fileId);
+          e._full = raw;
+        }
         const { meta, body } = parseFrontmatter(raw);
-        if (e.journal === "job") {
-          // Volle Werte aus dem Dateitext (ohne Laengenbegrenzung des Index)
+        if (e.journal === "job" || e.journal === "safe") {
           if (meta.uhrzeit) $("#fUhrzeit").value = meta.uhrzeit;
           if (meta.gespraechspartner) $("#fPartner").value = meta.gespraechspartner;
           if (meta.thema) $("#fThema").value = meta.thema;
@@ -629,7 +757,7 @@ async function openEditor(fileId) {
 
   renderEditorTagPicker();
   openOverlay("editorView");
-  setTimeout(() => { (currentJournal === "job" ? $("#fPartner") : $("#fText")).focus(); }, 50);
+  setTimeout(() => { (currentJournal === "privat" ? $("#fText") : $("#fPartner")).focus(); }, 50);
 }
 
 async function handleSave() {
@@ -646,7 +774,7 @@ async function handleSave() {
     eid: (existing && existing.eid) || makeId(),
   };
 
-  if (currentJournal === "job") {
+  if (currentJournal === "job" || currentJournal === "safe") {
     e.uhrzeit = $("#fUhrzeit").value || "";
     e.partner = $("#fPartner").value.trim();
     e.thema = $("#fThema").value.trim();
@@ -664,7 +792,8 @@ async function handleSave() {
   toastBusy("Speichere…");
   try {
     await saveEntry(e);
-    await loadEntries(currentJournal);
+    if (currentJournal === "safe") await loadSafeEntries();
+    else await loadEntries(currentJournal);
     closeOverlay("editorView");
     renderTagFilter();
     renderList();
@@ -683,7 +812,8 @@ async function handleDelete() {
   toastBusy("Loesche…");
   try {
     await driveTrash(editingId);
-    await loadEntries(currentJournal);
+    if (currentJournal === "safe") await loadSafeEntries();
+    else await loadEntries(currentJournal);
     closeOverlay("editorView");
     renderList();
     if (currentJournal === "privat") fillPrivateSnippets();
@@ -755,19 +885,19 @@ async function runReport() {
   out.innerHTML = "";
 
   try {
-    // sicherstellen, dass die betroffenen Journale geladen sind
-    for (const j of journals) { if (!loaded[j]) await loadEntries(j); }
+    // sicherstellen, dass die betroffenen Journale geladen sind (Safe nur wenn entsperrt)
+    for (const j of journals) { if (j !== "safe" && !loaded[j]) await loadEntries(j); }
 
     const termLow = term.toLowerCase();
     const hits = [];
     for (const j of journals) {
       for (const e of entries[j]) {
         if (activeTagFilter && reportScope === "current" && !(e.tags || []).includes(activeTagFilter)) continue;
-        // Body laden (gecacht in _full)
+        // Body aus dem Cache; bei Safe immer schon entschluesselt vorhanden
         let body = e._full;
         if (body == null) {
-          body = await driveGetContent(e.fileId);
-          e._full = body;
+          if (e.journal === "safe") { body = ""; }
+          else { body = await driveGetContent(e.fileId); e._full = body; }
         }
         const metaHay = [e.datum, deDate(e.datum), e.uhrzeit, e.partner, e.thema, e.ort, e.titel, (e.tags || []).join(" ")].join(" ");
         const haystack = (metaHay + " " + body).toLowerCase();
@@ -776,7 +906,8 @@ async function runReport() {
     }
     sortEntries(hits);
 
-    const scopeText = reportScope === "both" ? "beide Journale" : "Journal " + currentJournal;
+    const scopeName = { privat: "Privat", job: "Job", safe: "Datensafe" }[currentJournal] || currentJournal;
+    const scopeText = reportScope === "both" ? "beide Journale" : "Journal " + scopeName;
     const filterText = (activeTagFilter && reportScope === "current") ? ', Tag „' + esc(activeTagFilter) + '“' : "";
     meta.innerHTML = "<b>" + hits.length + "</b> Eintraege gefunden  ·  " +
       (term ? 'Suchtext „' + esc(term) + '“' : "alle Eintraege") + "  ·  " + esc(scopeText) + filterText;
@@ -792,10 +923,10 @@ async function runReport() {
 }
 
 function renderReportEntry(e) {
-  const head = (e.journal === "job" ? "Job" : "Privat") + "  ·  " + deDate(e.datum) +
-    (e.uhrzeit ? "  ·  " + e.uhrzeit : "");
+  const label = { job: "Job", safe: "Datensafe", privat: "Privat" }[e.journal] || "Privat";
+  const head = label + "  ·  " + deDate(e.datum) + (e.uhrzeit ? "  ·  " + e.uhrzeit : "");
   let inner = "";
-  if (e.journal === "job") {
+  if (e.journal === "job" || e.journal === "safe") {
     const { body } = parseFrontmatter(e._full || "");
     const sec = splitJobSections(body);
     inner = '<h3>' + (esc(e.thema) || "Ohne Thema") + "</h3>" +
@@ -827,6 +958,78 @@ function reportPlainText() {
 function openOverlay(id) { $("#" + id).classList.add("open"); document.body.style.overflow = "hidden"; }
 function closeOverlay(id) { $("#" + id).classList.remove("open"); document.body.style.overflow = ""; }
 
+/* ====== DATENSAFE-SPERRANSICHT ========================================= */
+function setMainHidden(hidden) {
+  document.querySelector(".toolbar").classList.toggle("hidden", hidden);
+  $("#tagFilter").classList.toggle("hidden", hidden);
+  $("#list").classList.toggle("hidden", hidden);
+}
+function showSafeGate() {
+  setMainHidden(true);
+  $("#safeLockBtn").classList.add("hidden");
+  $("#safeGate").classList.remove("hidden");
+  const isSetup = !safeMetaFileId;
+  $("#safeSetup").classList.toggle("hidden", !isSetup);
+  $("#safeUnlock").classList.toggle("hidden", isSetup);
+  $("#safeError").textContent = "";
+  $("#safeError2").textContent = "";
+  $("#safePw1").value = ""; $("#safePw2").value = ""; $("#safeUnlockPw").value = "";
+}
+function hideSafeGate() {
+  $("#safeGate").classList.add("hidden");
+  setMainHidden(false);
+}
+async function enterUnlockedSafe() {
+  hideSafeGate();
+  $("#safeLockBtn").classList.remove("hidden");
+  if (!loaded.safe) {
+    $("#list").innerHTML = '<div class="empty"><span class="spinner"></span>Entschlüssele…</div>';
+    try { await loadSafeEntries(); } catch (err) { toast("Konnte Safe nicht laden: " + esc(err.message), true); }
+  }
+  renderList();
+}
+
+async function handleSafeSetup() {
+  const p1 = $("#safePw1").value;
+  const p2 = $("#safePw2").value;
+  const err = $("#safeError");
+  err.textContent = "";
+  if (p1.length < 6) { err.textContent = "Bitte ein Passwort mit mindestens 6 Zeichen wählen."; return; }
+  if (p1 !== p2) { err.textContent = "Die beiden Passwörter stimmen nicht überein."; return; }
+  $("#safeSetupBtn").disabled = true;
+  toastBusy("Richte Datensafe ein…");
+  try {
+    await setupSafe(p1);
+    $("#toast").classList.remove("show");
+    await enterUnlockedSafe();
+    toast("Datensafe eingerichtet.");
+  } catch (e) {
+    $("#toast").classList.remove("show");
+    err.textContent = "Einrichten fehlgeschlagen: " + e.message;
+  } finally {
+    $("#safeSetupBtn").disabled = false;
+  }
+}
+
+async function handleSafeUnlock() {
+  const pw = $("#safeUnlockPw").value;
+  const err = $("#safeError2");
+  err.textContent = "";
+  if (!pw) { err.textContent = "Bitte Passwort eingeben."; return; }
+  $("#safeUnlockBtn").disabled = true;
+  toastBusy("Entsperre…");
+  try {
+    await unlockSafe(pw);
+    $("#toast").classList.remove("show");
+    await enterUnlockedSafe();
+  } catch (e) {
+    $("#toast").classList.remove("show");
+    err.textContent = (e.message === "Falsches Passwort") ? "Falsches Passwort." : ("Fehler: " + e.message);
+  } finally {
+    $("#safeUnlockBtn").disabled = false;
+  }
+}
+
 /* ====== JOURNAL WECHSELN =============================================== */
 async function switchJournal(j) {
   if (j === currentJournal) return;
@@ -837,6 +1040,15 @@ async function switchJournal(j) {
   $("#searchInput").value = "";
   applyJournalTheme();
   renderTagFilter();
+
+  if (j === "safe") {
+    if (!safeKey) { showSafeGate(); return; }
+    await enterUnlockedSafe();
+    return;
+  }
+
+  hideSafeGate();
+  $("#safeLockBtn").classList.add("hidden");
   if (!loaded[j]) {
     $("#list").innerHTML = '<div class="empty"><span class="spinner"></span>Lade…</div>';
     try { await loadEntries(j); } catch (err) { toast("Laden fehlgeschlagen: " + esc(err.message), true); }
@@ -861,10 +1073,14 @@ async function startApp() {
 
     applyJournalTheme();
     renderTagFilter();
-    $("#list").innerHTML = '<div class="empty"><span class="spinner"></span>Lade…</div>';
-    await loadEntries(currentJournal);
-    renderList();
-    if (currentJournal === "privat") fillPrivateSnippets();
+    if (currentJournal === "safe") {
+      showSafeGate();
+    } else {
+      $("#list").innerHTML = '<div class="empty"><span class="spinner"></span>Lade…</div>';
+      await loadEntries(currentJournal);
+      renderList();
+      if (currentJournal === "privat") fillPrivateSnippets();
+    }
   } catch (err) {
     const msg = (err && err.message) ? err.message : "Anmeldung abgebrochen.";
     $("#authError").textContent = "Anmeldung fehlgeschlagen: " + msg;
@@ -880,8 +1096,9 @@ function signOut() {
     try { google.accounts.oauth2.revoke(accessToken, () => {}); } catch (e) {}
   }
   accessToken = null;
-  loaded = { privat: false, job: false };
-  entries = { privat: [], job: [] };
+  lockSafe();
+  loaded = { privat: false, job: false, safe: false };
+  entries = { privat: [], job: [], safe: [] };
   $("#appView").classList.add("hidden");
   $("#authView").classList.remove("hidden");
 }
@@ -905,6 +1122,13 @@ function wireEvents() {
     setTimeout(() => $("#reportTerm").focus(), 50);
   };
   $("#signOutBtn").onclick = signOut;
+
+  // Datensafe
+  $("#safeLockBtn").onclick = () => { lockSafe(); showSafeGate(); };
+  $("#safeSetupBtn").onclick = handleSafeSetup;
+  $("#safeUnlockBtn").onclick = handleSafeUnlock;
+  $("#safeUnlockPw").onkeydown = (ev) => { if (ev.key === "Enter") { ev.preventDefault(); handleSafeUnlock(); } };
+  $("#safePw2").onkeydown = (ev) => { if (ev.key === "Enter") { ev.preventDefault(); handleSafeSetup(); } };
 
   // Suche in der Liste
   $("#searchInput").oninput = (ev) => {

@@ -44,6 +44,7 @@
       <div class="switch" role="tablist" aria-label="Journal wählen">
         <button data-j="privat" role="tab"><span class="dot"></span>Privat</button>
         <button data-j="job" role="tab"><span class="dot"></span>Job</button>
+        <button data-j="safe" role="tab"><span class="dot"></span>Safe</button>
       </div>
 
       <!-- Werkzeugleiste -->
@@ -54,6 +55,30 @@
           <input id="searchInput" type="text" placeholder="In der Liste suchen…" autocomplete="off">
         </div>
         <button id="openReportBtn" class="btn ghost">Bericht</button>
+        <button id="safeLockBtn" class="btn ghost small hidden">Safe sperren</button>
+      </div>
+
+      <!-- Datensafe-Sperransicht -->
+      <div id="safeGate" class="hidden">
+        <div class="safe-gate">
+          <div class="lock">🔒</div>
+          <div id="safeSetup" class="hidden">
+            <h3>Datensafe einrichten</h3>
+            <p>Lege ein zweites Passwort fest. Damit werden die Einträge im Datensafe verschlüsselt. Es ist unabhängig von deinem Google-Login.</p>
+            <div class="warn">Dieses Passwort wird nirgends gespeichert und kann nicht zurückgesetzt werden. Wenn du es vergisst, sind die Einträge im Datensafe unwiederbringlich verloren.</div>
+            <input id="safePw1" type="password" placeholder="Passwort" autocomplete="new-password">
+            <input id="safePw2" type="password" placeholder="Passwort wiederholen" autocomplete="new-password">
+            <button id="safeSetupBtn" class="btn primary">Datensafe einrichten</button>
+            <div id="safeError" class="err"></div>
+          </div>
+          <div id="safeUnlock" class="hidden">
+            <h3>Datensafe gesperrt</h3>
+            <p>Gib dein zweites Passwort ein, um die verschlüsselten Einträge zu laden.</p>
+            <input id="safeUnlockPw" type="password" placeholder="Passwort" autocomplete="current-password">
+            <button id="safeUnlockBtn" class="btn primary">Entsperren</button>
+            <div id="safeError2" class="err"></div>
+          </div>
+        </div>
       </div>
 
       <!-- Tag-Filter -->
@@ -131,7 +156,7 @@
       </div>
 
       <!-- Tags -->
-      <div class="field">
+      <div class="field" id="editorTagField">
         <label>Tags</label>
         <div id="editorTags" class="tagpick"></div>
         <div class="tag-add" style="margin-top:10px">
