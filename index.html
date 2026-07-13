@@ -37,6 +37,7 @@
         <div class="app-title">haigo-journal<small>Privat &amp; Job</small></div>
         <div class="head-spacer"></div>
         <button id="openTagsBtn" class="icon-btn">Tags</button>
+        <button id="openBackupBtn" class="icon-btn">Sicherung</button>
         <button id="signOutBtn" class="icon-btn">Abmelden</button>
       </header>
 
@@ -227,6 +228,29 @@
 
       <div id="reportMeta" class="report-meta"></div>
       <div id="reportResults"></div>
+    </div>
+  </div>
+
+  <!-- ===================== SICHERUNG ===================== -->
+  <div id="backupView" class="overlay">
+    <div class="wrap">
+      <div class="ov-head">
+        <button id="backupClose" class="icon-btn">Zurück</button>
+        <h2>Sicherung</h2>
+      </div>
+
+      <p id="backupStatus" class="report-meta"></p>
+      <p class="hint" style="margin-bottom:16px">Die App sichert deine Einträge automatisch einmal pro Woche in Drive, sobald du sie öffnest. Für eine Kopie außer Haus lädst du zusätzlich eine Datei herunter. Beim Wiederherstellen werden nur fehlende Einträge ergänzt, vorhandene bleiben unverändert.</p>
+
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:22px">
+        <button id="backupNowBtn" class="btn primary">Jetzt in Drive sichern</button>
+        <button id="backupDownloadBtn" class="btn">Herunterladen</button>
+        <button id="backupRestoreFileBtn" class="btn ghost">Aus Datei wiederherstellen</button>
+      </div>
+      <input id="backupFileInput" type="file" accept="application/json,.json" class="hidden">
+
+      <div class="section-label">Sicherungen in Drive</div>
+      <div id="backupList"></div>
     </div>
   </div>
 

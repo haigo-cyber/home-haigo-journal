@@ -26,9 +26,13 @@ const LS = {
   privat: "hj_privat_id",
   job:    "hj_job_id",
   safe:   "hj_safe_id",
+  backups:"hj_backups_id",
   tagsId: "hj_tags_id",
   journal:"hj_journal",
+  lastBackup: "hj_last_backup",
 };
+
+const BACKUP_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;  // eine Woche
 
 // Datensafe (zweite Stufe, eigene Verschluesselung)
 const SAFE_VERIFIER = "haigo-journal-safe-ok";
@@ -40,7 +44,7 @@ let accessToken = null;
 let tokenResolve = null;
 let tokenReject = null;
 
-let folders = { root: null, privat: null, job: null, safe: null };
+let folders = { root: null, privat: null, job: null, safe: null, backups: null };
 let tagsFileId = null;
 let tags = { privat: [], job: [] };
 
@@ -250,8 +254,8 @@ async function ensureStructure() {
   folders.root = rootId;
   localStorage.setItem(LS.root, rootId);
 
-  // Unterordner privat / job / safe
-  for (const j of ["privat", "job", "safe"]) {
+  // Unterordner privat / job / safe / backups
+  for (const j of ["privat", "job", "safe", "backups"]) {
     const sub = await driveList(q_folderByName(j, rootId), "files(id,name)");
     let id = sub.length ? sub[0].id : await driveCreateFolder(j, rootId);
     folders[j] = id;
@@ -379,6 +383,125 @@ async function loadSafeEntries() {
   sortEntries(list);
   entries.safe = list;
   loaded.safe = true;
+}
+
+/* ====== SICHERUNG / WIEDERHERSTELLUNG ================================== */
+// Sammelt alle Dateien roh (Safe-Dateien bleiben verschluesselt) in ein Objekt.
+async function collectBackup() {
+  const files = [];
+  const counts = { privat: 0, job: 0, safe: 0 };
+  for (const j of ["privat", "job", "safe"]) {
+    const list = await driveList(
+      "'" + folders[j] + "' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder'",
+      "files(id,name,mimeType,appProperties)"
+    );
+    for (const f of list) {
+      if (f.name === "tags.json" || f.name === "safe.json") continue;
+      const content = await driveGetContent(f.id);
+      files.push({ journal: j, name: f.name, mimeType: f.mimeType || "text/plain", appProperties: f.appProperties || {}, content: content });
+      counts[j]++;
+    }
+  }
+  if (tagsFileId) { try { files.push({ special: "tags.json", content: await driveGetContent(tagsFileId) }); } catch (e) {} }
+  if (safeMetaFileId) { try { files.push({ special: "safe.json", content: await driveGetContent(safeMetaFileId) }); } catch (e) {} }
+  return { type: "haigo-journal-backup", version: 1, created: new Date().toISOString(), counts: counts, files: files };
+}
+
+async function snapshotToDrive() {
+  const obj = await collectBackup();
+  const c = obj.created;
+  const name = "backup_" + c.slice(0, 10) + "_" + c.slice(11, 16).replace(":", "") + ".json";
+  await driveCreateFile(name, folders.backups, "application/json", JSON.stringify(obj), { app: "haigo-journal" });
+  localStorage.setItem(LS.lastBackup, obj.created);
+  return obj;
+}
+
+function downloadBackupObject(obj) {
+  const blob = new Blob([JSON.stringify(obj)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "haigo-journal-backup_" + obj.created.slice(0, 10) + ".json";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+async function listDriveBackups() {
+  const list = await driveList(
+    "'" + folders.backups + "' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder'",
+    "files(id,name,modifiedTime)"
+  );
+  list.sort((a, b) => (b.name || "").localeCompare(a.name || ""));
+  return list;
+}
+
+// Wiederherstellung: nur fehlende Eintraege ergaenzen, vorhandene bleiben unberuehrt.
+async function restoreFromObject(obj) {
+  if (!obj || obj.type !== "haigo-journal-backup" || !Array.isArray(obj.files)) {
+    throw new Error("Das ist keine gültige Sicherungsdatei.");
+  }
+  const existing = {};
+  for (const j of ["privat", "job", "safe"]) {
+    const list = await driveList(
+      "'" + folders[j] + "' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder'",
+      "files(id,name)"
+    );
+    existing[j] = new Set(list.map(f => f.name));
+  }
+  let added = 0;
+  for (const item of obj.files) {
+    if (item.special) continue;
+    const j = item.journal;
+    if (!folders[j]) continue;
+    if (existing[j] && existing[j].has(item.name)) continue;   // vorhandene nicht anfassen
+    await driveCreateFile(item.name, folders[j], item.mimeType || "text/plain", item.content || "", item.appProperties || null);
+    added++;
+  }
+  // tags.json zusammenfuehren (Vereinigung)
+  const tagsItem = obj.files.find(x => x.special === "tags.json");
+  if (tagsItem) {
+    try {
+      const bt = JSON.parse(tagsItem.content);
+      ["privat", "job"].forEach(k => {
+        const cur = new Set(tags[k] || []);
+        (bt[k] || []).forEach(t => cur.add(t));
+        tags[k] = Array.from(cur).sort((a, b) => a.localeCompare(b, "de"));
+      });
+      await saveTags();
+    } catch (e) {}
+  }
+  // safe.json nur wiederherstellen, wenn noch keines existiert (sonst wuerde der
+  // Schluessel/Salt der vorhandenen Safe-Eintraege ueberschrieben)
+  const safeItem = obj.files.find(x => x.special === "safe.json");
+  if (safeItem && !safeMetaFileId) {
+    safeMetaFileId = await driveCreateFile("safe.json", folders.safe, "application/json", safeItem.content, { app: "haigo-journal" });
+  }
+  return added;
+}
+
+async function autoBackupIfDue() {
+  try {
+    const last = localStorage.getItem(LS.lastBackup);
+    const due = !last || (Date.now() - new Date(last).getTime()) > BACKUP_INTERVAL_MS;
+    if (!due) return;
+    await snapshotToDrive();
+    toast("Wöchentliche Sicherung erstellt.");
+  } catch (e) { /* still, soll den Start nicht stoeren */ }
+}
+
+async function reloadCurrentAfterRestore() {
+  loaded = { privat: false, job: false, safe: false };
+  entries = { privat: [], job: [], safe: [] };
+  if (currentJournal === "safe") {
+    if (safeKey) { await loadSafeEntries(); renderList(); }
+    else { showSafeGate(); }
+  } else {
+    await loadEntries(currentJournal);
+    renderList();
+    if (currentJournal === "privat") fillPrivateSnippets();
+  }
 }
 
 /* ====== EINTRAEGE: AUFBAU & PARSEN ====================================== */
@@ -1081,6 +1204,7 @@ async function startApp() {
       renderList();
       if (currentJournal === "privat") fillPrivateSnippets();
     }
+    autoBackupIfDue();   // woechentlicher Schnappschuss, laeuft im Hintergrund
   } catch (err) {
     const msg = (err && err.message) ? err.message : "Anmeldung abgebrochen.";
     $("#authError").textContent = "Anmeldung fehlgeschlagen: " + msg;
@@ -1103,6 +1227,113 @@ function signOut() {
   $("#authView").classList.remove("hidden");
 }
 
+/* ====== SICHERUNG: BEDIENUNG =========================================== */
+function backupDateLabel(name) {
+  const m = String(name).match(/backup_(\d{4})-(\d{2})-(\d{2})_(\d{2})(\d{2})/);
+  if (!m) return name;
+  return m[3] + "." + m[2] + "." + m[1] + "  " + m[4] + ":" + m[5];
+}
+
+function renderBackupStatus() {
+  const last = localStorage.getItem(LS.lastBackup);
+  $("#backupStatus").innerHTML = last
+    ? "Letzte automatische Sicherung: <b>" + esc(backupDateLabel("backup_" + last.slice(0,10) + "_" + last.slice(11,16).replace(":",""))) + "</b>"
+    : "Bisher wurde noch keine automatische Sicherung erstellt.";
+}
+
+async function renderBackupList() {
+  const box = $("#backupList");
+  box.innerHTML = '<div class="hint"><span class="spinner"></span>Lade…</div>';
+  try {
+    const list = await listDriveBackups();
+    if (!list.length) { box.innerHTML = '<div class="hint">Noch keine Sicherungen in Drive.</div>'; return; }
+    box.innerHTML = list.map(f =>
+      '<div class="tag-row"><span>' + esc(backupDateLabel(f.name)) + "</span>" +
+      '<button data-id="' + esc(f.id) + '" data-label="' + esc(backupDateLabel(f.name)) + '">wiederherstellen</button></div>'
+    ).join("");
+    $$("#backupList .tag-row button").forEach(b => b.onclick = () => handleRestoreFromDrive(b.dataset.id, b.dataset.label));
+  } catch (err) {
+    box.innerHTML = '<div class="hint">Konnte Sicherungen nicht laden: ' + esc(err.message) + "</div>";
+  }
+}
+
+function openBackupView() {
+  renderBackupStatus();
+  openOverlay("backupView");
+  renderBackupList();
+}
+
+async function handleSnapshotNow() {
+  $("#backupNowBtn").disabled = true;
+  toastBusy("Sichere in Drive…");
+  try {
+    await snapshotToDrive();
+    $("#toast").classList.remove("show");
+    renderBackupStatus();
+    await renderBackupList();
+    toast("Sicherung in Drive erstellt.");
+  } catch (err) {
+    toast("Sicherung fehlgeschlagen: " + esc(err.message), true);
+  } finally {
+    $("#backupNowBtn").disabled = false;
+  }
+}
+
+async function handleDownloadBackup() {
+  $("#backupDownloadBtn").disabled = true;
+  toastBusy("Sammle Einträge…");
+  try {
+    const obj = await collectBackup();
+    downloadBackupObject(obj);
+    $("#toast").classList.remove("show");
+    toast("Sicherung heruntergeladen.");
+  } catch (err) {
+    toast("Herunterladen fehlgeschlagen: " + esc(err.message), true);
+  } finally {
+    $("#backupDownloadBtn").disabled = false;
+  }
+}
+
+function handleRestoreFromFile(file) {
+  const reader = new FileReader();
+  reader.onload = async () => {
+    let obj;
+    try { obj = JSON.parse(reader.result); }
+    catch (e) { toast("Datei ist keine gültige Sicherung.", true); return; }
+    await doRestore(obj, "der gewählten Datei");
+  };
+  reader.onerror = () => toast("Datei konnte nicht gelesen werden.", true);
+  reader.readAsText(file);
+}
+
+async function handleRestoreFromDrive(fileId, label) {
+  if (!confirm("Sicherung von " + label + " wiederherstellen? Fehlende Einträge werden ergänzt, vorhandene bleiben unverändert.")) return;
+  toastBusy("Lade Sicherung…");
+  try {
+    const raw = await driveGetContent(fileId);
+    const obj = JSON.parse(raw);
+    await doRestore(obj, label, true);
+  } catch (err) {
+    toast("Wiederherstellen fehlgeschlagen: " + esc(err.message), true);
+  }
+}
+
+async function doRestore(obj, label, skipConfirm) {
+  if (!skipConfirm) {
+    if (!confirm("Sicherung aus " + label + " wiederherstellen? Fehlende Einträge werden ergänzt, vorhandene bleiben unverändert.")) return;
+  }
+  toastBusy("Stelle wieder her…");
+  try {
+    const added = await restoreFromObject(obj);
+    await reloadCurrentAfterRestore();
+    renderTagFilter();
+    $("#toast").classList.remove("show");
+    toast(added + " Eintraege wiederhergestellt.");
+  } catch (err) {
+    toast("Wiederherstellen fehlgeschlagen: " + esc(err.message), true);
+  }
+}
+
 /* ====== EREIGNISSE VERDRAHTEN ========================================== */
 function wireEvents() {
   $("#loginBtn").onclick = startApp;
@@ -1122,6 +1353,18 @@ function wireEvents() {
     setTimeout(() => $("#reportTerm").focus(), 50);
   };
   $("#signOutBtn").onclick = signOut;
+
+  // Sicherung
+  $("#openBackupBtn").onclick = openBackupView;
+  $("#backupClose").onclick = () => closeOverlay("backupView");
+  $("#backupNowBtn").onclick = handleSnapshotNow;
+  $("#backupDownloadBtn").onclick = handleDownloadBackup;
+  $("#backupRestoreFileBtn").onclick = () => $("#backupFileInput").click();
+  $("#backupFileInput").onchange = (ev) => {
+    const f = ev.target.files && ev.target.files[0];
+    if (f) handleRestoreFromFile(f);
+    ev.target.value = "";
+  };
 
   // Datensafe
   $("#safeLockBtn").onclick = () => { lockSafe(); showSafeGate(); };
