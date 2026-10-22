@@ -1,5 +1,5 @@
 // Service Worker – cacht nur die App-Hülle, niemals Google-API-Antworten.
-const CACHE = "todo-shell-v200";
+const CACHE = "todo-shell-v201";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest?v=2", "./icon-192.png?v=2", "./icon-512.png?v=2", "./favicon-32.png?v=2"];
 
 self.addEventListener("install", (e) => {

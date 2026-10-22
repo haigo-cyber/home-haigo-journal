@@ -3157,7 +3157,7 @@ function render(){
         <button class="icon-btn" id="signoutBtn">Abmelden</button>
       </div>
       
-      <p class="muted" style="font-size:12px;margin-top:18px">Aufgaben, Projekte & Notizen liegen ausschließlich in deinem Google-Konto. Kalender-Sync ist pro Aufgabe schaltbar (Standard: an), der Zielkalender pro Eintrag wählbar.</p>
+      <p class="muted" style="font-size:12px;margin-top:18px">Programmstand ${APP_VER}. Aufgaben, Projekte & Notizen liegen ausschließlich in deinem Google-Konto. Kalender-Sync ist pro Aufgabe schaltbar (Standard: an), der Zielkalender pro Eintrag wählbar.</p>
     `;
     const dcs=$("defCalSel"); if(dcs) dcs.onchange=()=>{ defaultCalId=dcs.value; localStorage.setItem("defcal",defaultCalId); toast("Standard-Kalender gesetzt"); };
     ksBindSettings();
@@ -3522,6 +3522,7 @@ function openMdImport(){
 /* ============ TAGESSTRUKTUR (eigener Reiter, eigene Datei in Google Drive) ============ */
 /* Alles, was hier geplant wird, liegt ausschließlich in der Drive-Datei "Tagesstruktur.json".
    ToDos und Ziele werden nur GELESEN und als Kopie auf die Zeitleiste gelegt; es gibt keine Schreibzugriffe auf Aufgaben, Ziele, Logs oder Kalender. */
+const APP_VER = "v201";   // gleich dem Cache-Namen in sw.js, zur Kontrolle der laufenden Version
 const TP_FILE = "Tagesstruktur.json";
 const TP_COLORS = ["#3b82f6","#f59e0b","#22c55e","#a855f7","#ef4444","#64748b"];
 const tp = {day:"", data:null, loading:false, err:"", fileId:"", mt:"", saveT:null, saving:false, again:false, pending:false,
@@ -3726,7 +3727,7 @@ function tpMount(m){
       </div></div></div>
     <div class="tp-sum" id="tp_sum">${esc(tpSumText())}</div>
     <div class="tp-pool" id="tp_pool">${tpPoolHtml()}</div>
-    <div class="tp-note">Die Tagesstruktur liegt in der eigenen Drive-Datei „${TP_FILE}“. Änderungen hier verändern keine ToDos, Ziele oder Kalendertermine.</div>
+    <div class="tp-note">Die Tagesstruktur liegt in der eigenen Drive-Datei „${TP_FILE}“. Änderungen hier verändern keine ToDos, Ziele oder Kalendertermine. Programmstand ${APP_VER}.</div>
   </div>`;
   const sc = document.getElementById("tp_scroll");
   if(sc){
@@ -4080,7 +4081,7 @@ function tmMount(m){
       </div></div></div>
     <div class="tp-sum">${tm.data.blocks.length ? `${tm.data.blocks.length} Block${tm.data.blocks.length===1?"":"e"}, zusammen ${sumDays} Tage geplant` : "Noch nichts geplant. In die Zeitleiste tippen oder unten ein Meta-Projekt übernehmen."}</div>
     <div class="tp-pool" id="tm_pool">${tmPoolHtml()}</div>
-    <div class="tp-note">Die Metaprojektplanung liegt in der eigenen Drive-Datei „${TM_FILE}“. Änderungen hier verändern keine Meta-Projekte, ToDos oder Termine im Arbeitsbereich. Die Fahne ⚑ zeigt die Deadline des Meta-Projekts (nur Anzeige).</div>
+    <div class="tp-note">Die Metaprojektplanung liegt in der eigenen Drive-Datei „${TM_FILE}“. Änderungen hier verändern keine Meta-Projekte, ToDos oder Termine im Arbeitsbereich. Die Fahne ⚑ zeigt die Deadline des Meta-Projekts (nur Anzeige). Programmstand ${APP_VER}.</div>
   </div>`;
   const sc = document.getElementById("tm_scroll");
   if(sc){
